@@ -14,8 +14,8 @@ const DashboardLayout = () => {
   return (
     <div className="flex h-screen">
       {/* Sidebar */}
-      <aside className="w-64 bg-gray-900 text-white flex flex-col p-4">
-        <h2 className="text-xl font-bold mb-6">Lab Platform</h2>
+      <aside className="w-64 bg-white text-white flex flex-col p-4">
+        <h2 className="text-xl text-black font-bold mb-6">Lab Platform</h2>
 
         <nav className="flex flex-col gap-4">
           <Link to="/dashboard" className="flex items-center gap-2 hover:text-gray-300">
