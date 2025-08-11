@@ -66,7 +66,7 @@ const DashboardLayout = () => {
         <>
           <aside className="absolute left-0 top-0 h-full w-64 bg-white/95 backdrop-blur-md border-r shadow-lg p-4 flex flex-col z-50">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Lab Platform</h2>
+              <h2 className="text-xl text-black font-bold">Lab Platform</h2>
               <button
                 onClick={() => setIsExpanded(false)}
                 className="p-1 hover:bg-gray-100 rounded"

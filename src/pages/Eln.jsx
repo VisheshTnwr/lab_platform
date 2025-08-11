@@ -1,29 +1,16 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Trash2, Edit2 } from "lucide-react";
-import { Plus } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
+
+// 🔹 Replace with your Supabase credentials
+const supabase = createClient(
+  "https://cfysbejlmhgfgkrivlcy.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmeXNiZWpsbWhnZmdrcml2bGN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ0OTg3NjksImV4cCI6MjA3MDA3NDc2OX0.7b0GxDe5ZAkyDpiwJugm5c4tbyuQjCOMDrM6N9ScmR4"
+);
 
 export default function ELN() {
-  const [notebooks, setNotebooks] = useState([
-    { id: 1, name: "Chemistry Experiments" },
-    { id: 2, name: "Biology Notes" },
-  ]);
-
-  const [entries, setEntries] = useState([
-    {
-      id: 1,
-      notebookId: 1,
-      title: "Acid-Base Reaction",
-      content: "Mixed HCl with NaOH...",
-      date: "2025-08-09",
-    },
-    {
-      id: 2,
-      notebookId: 2,
-      title: "Cell Observation",
-      content: "Observed onion cells under microscope...",
-      date: "2025-08-08",
-    },
-  ]);
+  const [notebooks, setNotebooks] = useState([]);
+  const [entries, setEntries] = useState([]);
 
   const [selectedNotebook, setSelectedNotebook] = useState(null);
   const [selectedEntry, setSelectedEntry] = useState(null);
@@ -31,53 +18,89 @@ export default function ELN() {
   const [newNotebookName, setNewNotebookName] = useState("");
   const [editEntry, setEditEntry] = useState(null);
 
-  // Add notebook
-  const handleAddNotebook = () => {
-    if (!newNotebookName.trim()) return;
-    const newNotebook = {
-      id: notebooks.length + 1,
-      name: newNotebookName,
-    };
-    setNotebooks([...notebooks, newNotebook]);
-    setNewNotebookName("");
+  // 🔹 Fetch data from Supabase on mount
+  useEffect(() => {
+    fetchNotebooks();
+    fetchEntries();
+  }, []);
+
+  const fetchNotebooks = async () => {
+    let { data, error } = await supabase.from("notebooks").select("*");
+    if (!error) setNotebooks(data);
   };
 
-  // Delete notebook
-  const handleDeleteNotebook = (id) => {
+  const fetchEntries = async () => {
+    let { data, error } = await supabase.from("entries").select("*");
+    if (!error) setEntries(data);
+  };
+
+  // 🔹 Add notebook
+  const handleAddNotebook = async () => {
+    if (!newNotebookName.trim()) return;
+    const { data, error } = await supabase
+      .from("notebooks")
+      .insert([{ name: newNotebookName }])
+      .select();
+    if (!error) {
+      setNotebooks([...notebooks, ...data]);
+      setNewNotebookName("");
+    }
+  };
+
+  // 🔹 Delete notebook
+  const handleDeleteNotebook = async (id) => {
+    await supabase.from("entries").delete().eq("notebook_id", id);
+    await supabase.from("notebooks").delete().eq("id", id);
     setNotebooks(notebooks.filter((nb) => nb.id !== id));
-    setEntries(entries.filter((e) => e.notebookId !== id));
+    setEntries(entries.filter((e) => e.notebook_id !== id));
     if (selectedNotebook?.id === id) {
       setSelectedNotebook(null);
       setSelectedEntry(null);
     }
   };
 
-  // Add entry
-  const handleAddEntry = () => {
+  // 🔹 Add entry
+  const handleAddEntry = async () => {
     if (!newEntry.title.trim() || !newEntry.content.trim() || !selectedNotebook)
       return;
-    const entry = {
-      id: entries.length + 1,
-      notebookId: selectedNotebook.id,
+    const entryData = {
+      notebook_id: selectedNotebook.id,
       title: newEntry.title,
       content: newEntry.content,
       date: new Date().toISOString().split("T")[0],
     };
-    setEntries([...entries, entry]);
-    setNewEntry({ title: "", content: "" });
+    const { data, error } = await supabase
+      .from("entries")
+      .insert([entryData])
+      .select();
+    if (!error) {
+      setEntries([...entries, ...data]);
+      setNewEntry({ title: "", content: "" });
+    }
   };
 
-  // Delete entry
-  const handleDeleteEntry = (id) => {
+  // 🔹 Delete entry
+  const handleDeleteEntry = async (id) => {
+    await supabase.from("entries").delete().eq("id", id);
     setEntries(entries.filter((e) => e.id !== id));
     if (selectedEntry?.id === id) setSelectedEntry(null);
   };
 
-  // Edit entry
-  const handleEditEntry = () => {
+  // 🔹 Edit entry
+  const handleEditEntry = async () => {
     if (!editEntry.title.trim() || !editEntry.content.trim()) return;
-    setEntries(entries.map((e) => (e.id === editEntry.id ? editEntry : e)));
-    setEditEntry(null);
+    const { data, error } = await supabase
+      .from("entries")
+      .update({
+        title: editEntry.title,
+        content: editEntry.content,
+      })
+      .eq("id", editEntry.id)
+      .select();
+    if (!error) {
+      setEntries(entries.map((e) => (e.id === editEntry.id ? data[0] : e)));
+      setEditEntry(null);
+    }
   };
 
   return (
@@ -94,12 +117,11 @@ export default function ELN() {
             className="flex-1 min-w-0 p-2 border rounded text-black"
           />
           <button
-  onClick={handleAddNotebook}
-  className="w-10 h-10 bg-black text-white rounded flex items-center justify-center hover:bg-gray-800 text-xl font-bold"
->
-  +
-</button>
-
+            onClick={handleAddNotebook}
+            className="w-10 h-10 bg-black text-white rounded flex items-center justify-center hover:bg-gray-800 text-xl font-bold"
+          >
+            +
+          </button>
         </div>
         {notebooks.map((nb) => (
           <div
@@ -135,7 +157,7 @@ export default function ELN() {
         </h2>
         {selectedNotebook &&
           entries
-            .filter((e) => e.notebookId === selectedNotebook.id)
+            .filter((e) => e.notebook_id === selectedNotebook.id)
             .map((entry) => (
               <div
                 key={entry.id}
