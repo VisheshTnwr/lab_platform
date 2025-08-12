@@ -1,12 +1,13 @@
 // src/components/DashboardLayout.jsx
 import { Outlet, Link, useNavigate } from "react-router-dom";
-import { LogOut, FileText, Home, Menu } from "lucide-react";
+import { LogOut, FileText, Home, Menu, Boxes } from "lucide-react"; // Added Boxes icon
 import { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Home },
   { to: "/dashboard/eln", label: "Experiments", icon: FileText },
+  { to: "/dashboard/inventory", label: "Inventory", icon: Boxes }, // New Inventory item
 ];
 
 const DashboardLayout = () => {
