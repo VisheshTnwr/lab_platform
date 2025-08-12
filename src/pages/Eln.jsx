@@ -7,15 +7,21 @@ function Eln() {
   const [selectedNotebook, setSelectedNotebook] = useState(null);
   const [entries, setEntries] = useState([]);
   const [selectedEntry, setSelectedEntry] = useState(null);
+  const [entryItems, setEntryItems] = useState([]);
   const [newNotebookName, setNewNotebookName] = useState("");
   const [newEntryTitle, setNewEntryTitle] = useState("");
   const [newEntryContent, setNewEntryContent] = useState("");
   const [editEntry, setEditEntry] = useState(null);
   const [showAddEntryForm, setShowAddEntryForm] = useState(false);
 
-  // Fetch notebooks
+  // inventory for dropdown
+  const [inventory, setInventory] = useState([]);
+  const [selectedItems, setSelectedItems] = useState([{ inventory_id: "", quantity_used: "", step_number: "" }]);
+
+  // Fetch notebooks & inventory
   useEffect(() => {
     fetchNotebooks();
+    fetchInventory();
   }, []);
 
   async function fetchNotebooks() {
@@ -29,6 +35,25 @@ function Eln() {
       .select("*")
       .eq("notebook_id", notebookId);
     if (!error) setEntries(data);
+  }
+
+  async function fetchInventory() {
+    const { data, error } = await supabase.from("inventory").select("*");
+    if (!error) setInventory(data);
+  }
+
+  async function fetchEntryItems(entryId) {
+    const { data, error } = await supabase
+      .from("entry_items")
+      .select(`
+        id,
+        quantity_used,
+        step_number,
+        inventory (id, name)
+      `)
+      .eq("entry_id", entryId);
+
+    if (!error) setEntryItems(data || []);
   }
 
   async function handleAddNotebook(e) {
@@ -51,13 +76,16 @@ function Eln() {
       setSelectedNotebook(null);
       setEntries([]);
       setSelectedEntry(null);
+      setEntryItems([]);
     }
   }
 
   async function handleAddEntry(e) {
     e.preventDefault();
     if (!newEntryTitle || !selectedNotebook) return;
-    const { data, error } = await supabase
+
+    // Insert the entry
+    const { data: entryData, error: entryError } = await supabase
       .from("entries")
       .insert([
         {
@@ -67,18 +95,45 @@ function Eln() {
         },
       ])
       .select();
-    if (!error) {
-      setEntries([...entries, data[0]]);
-      setNewEntryTitle("");
-      setNewEntryContent("");
-      setShowAddEntryForm(false);
+
+    if (entryError) return;
+
+    const entryId = entryData[0].id;
+
+    // Insert linked items
+    for (const item of selectedItems) {
+      if (item.inventory_id && item.quantity_used) {
+        await supabase.from("entry_items").insert([
+          {
+            entry_id: entryId,
+            inventory_id: item.inventory_id,
+            quantity_used: parseFloat(item.quantity_used),
+            step_number: item.step_number ? parseInt(item.step_number) : null,
+          },
+        ]);
+
+        // Update inventory quantity
+        await supabase.rpc("decrease_inventory_quantity", {
+          item_id: item.inventory_id,
+          amount: parseFloat(item.quantity_used),
+        });
+      }
     }
+
+    setEntries([...entries, entryData[0]]);
+    setNewEntryTitle("");
+    setNewEntryContent("");
+    setSelectedItems([{ inventory_id: "", quantity_used: "", step_number: "" }]);
+    setShowAddEntryForm(false);
   }
 
   async function handleDeleteEntry(id) {
     await supabase.from("entries").delete().eq("id", id);
     setEntries(entries.filter((e) => e.id !== id));
-    if (selectedEntry?.id === id) setSelectedEntry(null);
+    if (selectedEntry?.id === id) {
+      setSelectedEntry(null);
+      setEntryItems([]);
+    }
   }
 
   async function handleEditEntry(e) {
@@ -99,6 +154,16 @@ function Eln() {
       setEditEntry(null);
     }
   }
+
+  const handleItemChange = (index, field, value) => {
+    const updated = [...selectedItems];
+    updated[index][field] = value;
+    setSelectedItems(updated);
+  };
+
+  const addNewItemField = () => {
+    setSelectedItems([...selectedItems, { inventory_id: "", quantity_used: "", step_number: "" }]);
+  };
 
   return (
     <div className="grid grid-cols-3 gap-4 h-full text-black">
@@ -127,6 +192,7 @@ function Eln() {
               setSelectedNotebook(nb);
               fetchEntries(nb.id);
               setSelectedEntry(null);
+              setEntryItems([]);
             }}
           >
             <span>{nb.name}</span>
@@ -157,7 +223,10 @@ function Eln() {
                     className={`group p-2 mb-1 rounded flex justify-between items-center cursor-pointer hover:bg-gray-100 ${
                       selectedEntry?.id === entry.id ? "bg-gray-200" : ""
                     }`}
-                    onClick={() => setSelectedEntry(entry)}
+                    onClick={() => {
+                      setSelectedEntry(entry);
+                      fetchEntryItems(entry.id);
+                    }}
                   >
                     <div>
                       <p className="font-medium">{entry.title}</p>
@@ -229,6 +298,40 @@ function Eln() {
               placeholder="Content"
               className="border p-1 w-full mb-2"
             />
+
+            <h4 className="font-semibold mb-1">Items Used</h4>
+            {selectedItems.map((item, index) => (
+              <div key={index} className="flex gap-2 mb-2">
+                <select
+                  value={item.inventory_id}
+                  onChange={(e) => handleItemChange(index, "inventory_id", e.target.value)}
+                  className="border p-1 flex-1"
+                >
+                  <option value="">Select Item</option>
+                  {inventory.map((inv) => (
+                    <option key={inv.id} value={inv.id}>{inv.name}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  placeholder="Qty"
+                  value={item.quantity_used}
+                  onChange={(e) => handleItemChange(index, "quantity_used", e.target.value)}
+                  className="border p-1 w-20"
+                />
+                <input
+                  type="number"
+                  placeholder="Step"
+                  value={item.step_number}
+                  onChange={(e) => handleItemChange(index, "step_number", e.target.value)}
+                  className="border p-1 w-20"
+                />
+              </div>
+            ))}
+            <button type="button" onClick={addNewItemField} className="text-blue-500 mb-2">
+              + Add Another Item
+            </button>
+
             <button
               type="submit"
               className="px-3 py-1 bg-blue-500 text-white rounded w-full"
@@ -246,6 +349,20 @@ function Eln() {
             <h2 className="font-bold text-lg mb-2">{selectedEntry.title}</h2>
             <p className="text-sm mb-4">{selectedEntry.date}</p>
             <p>{selectedEntry.content}</p>
+
+            {entryItems.length > 0 && (
+              <div className="mt-4">
+                <h3 className="font-semibold mb-2">Items Used</h3>
+                <ul className="list-disc pl-5">
+                  {entryItems.map(item => (
+                    <li key={item.id}>
+                      {item.inventory?.name || "Unknown Item"} — {item.quantity_used} units
+                      {item.step_number && ` (Step ${item.step_number})`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </>
         ) : (
           <p>Select an entry to view</p>
