@@ -14,11 +14,12 @@ function Eln() {
   const [editEntry, setEditEntry] = useState(null);
   const [showAddEntryForm, setShowAddEntryForm] = useState(false);
 
-  // inventory for dropdown
+  // Inventory linking
   const [inventory, setInventory] = useState([]);
-  const [selectedItems, setSelectedItems] = useState([{ inventory_id: "", quantity_used: "", step_number: "" }]);
+  const [selectedItems, setSelectedItems] = useState([
+    { inventory_id: "", quantity_used: "", step_number: "" },
+  ]);
 
-  // Fetch notebooks & inventory
   useEffect(() => {
     fetchNotebooks();
     fetchInventory();
@@ -26,7 +27,7 @@ function Eln() {
 
   async function fetchNotebooks() {
     const { data, error } = await supabase.from("notebooks").select("*");
-    if (!error) setNotebooks(data);
+    if (!error) setNotebooks(data || []);
   }
 
   async function fetchEntries(notebookId) {
@@ -34,25 +35,27 @@ function Eln() {
       .from("entries")
       .select("*")
       .eq("notebook_id", notebookId);
-    if (!error) setEntries(data);
+    if (!error) setEntries(data || []);
   }
 
   async function fetchInventory() {
     const { data, error } = await supabase.from("inventory").select("*");
-    if (!error) setInventory(data);
+    if (!error) setInventory(data || []);
   }
 
   async function fetchEntryItems(entryId) {
+    // If your foreign key column is item_id instead of inventory_id,
+    // change "inventory_id" below to "item_id", and in select use
+    // `inventory:item_id (id, name)` aliasing.
     const { data, error } = await supabase
       .from("entry_items")
       .select(`
         id,
         quantity_used,
         step_number,
-        inventory (id, name)
+        inventory:inventory_id (id, name)
       `)
       .eq("entry_id", entryId);
-
     if (!error) setEntryItems(data || []);
   }
 
@@ -63,15 +66,15 @@ function Eln() {
       .from("notebooks")
       .insert([{ name: newNotebookName }])
       .select();
-    if (!error) {
-      setNotebooks([...notebooks, data[0]]);
+    if (!error && data?.[0]) {
+      setNotebooks((prev) => [...prev, data[0]]);
       setNewNotebookName("");
     }
   }
 
   async function handleDeleteNotebook(id) {
     await supabase.from("notebooks").delete().eq("id", id);
-    setNotebooks(notebooks.filter((nb) => nb.id !== id));
+    setNotebooks((prev) => prev.filter((nb) => nb.id !== id));
     if (selectedNotebook?.id === id) {
       setSelectedNotebook(null);
       setEntries([]);
@@ -84,7 +87,7 @@ function Eln() {
     e.preventDefault();
     if (!newEntryTitle || !selectedNotebook) return;
 
-    // Insert the entry
+    // 1) Create the entry
     const { data: entryData, error: entryError } = await supabase
       .from("entries")
       .insert([
@@ -96,31 +99,51 @@ function Eln() {
       ])
       .select();
 
-    if (entryError) return;
+    if (entryError || !entryData?.[0]) return;
 
     const entryId = entryData[0].id;
 
-    // Insert linked items
-    for (const item of selectedItems) {
-      if (item.inventory_id && item.quantity_used) {
-        await supabase.from("entry_items").insert([
-          {
-            entry_id: entryId,
-            inventory_id: item.inventory_id,
-            quantity_used: parseFloat(item.quantity_used),
-            step_number: item.step_number ? parseInt(item.step_number) : null,
-          },
-        ]);
+    // 2) Insert linked items + update inventory quantity directly (no RPC)
+    for (const usage of selectedItems) {
+      const invId = usage.inventory_id;
+      const qty = parseFloat(usage.quantity_used);
+      const step = usage.step_number ? parseInt(usage.step_number) : null;
 
-        // Update inventory quantity
-        await supabase.rpc("decrease_inventory_quantity", {
-          item_id: item.inventory_id,
-          amount: parseFloat(item.quantity_used),
-        });
-      }
+      if (!invId || !qty || Number.isNaN(qty)) continue;
+
+      // Insert row into entry_items
+      await supabase.from("entry_items").insert([
+        {
+          entry_id: entryId,
+          inventory_id: invId, // if your column is item_id, change here
+          quantity_used: qty,
+          step_number: step,
+        },
+      ]);
+
+      // Find current item in local state
+      const invRow = inventory.find((i) => String(i.id) === String(invId));
+      const currentQty = invRow?.quantity ?? 0;
+      const newQty = Math.max(0, currentQty - qty); // simple guard
+
+      // Update DB inventory
+      await supabase
+        .from("inventory")
+        .update({ quantity: newQty })
+        .eq("id", invId);
+
+      // Update local inventory state to reflect change immediately
+      setInventory((prev) =>
+        prev.map((i) =>
+          String(i.id) === String(invId) ? { ...i, quantity: newQty } : i
+        )
+      );
     }
 
-    setEntries([...entries, entryData[0]]);
+    // 3) Update UI
+    setEntries((prev) => [...prev, entryData[0]]);
+    setSelectedEntry(entryData[0]);              // <-- ADDED: auto-select new entry
+    await fetchEntryItems(entryId);              // <-- ADDED: load its items into details
     setNewEntryTitle("");
     setNewEntryContent("");
     setSelectedItems([{ inventory_id: "", quantity_used: "", step_number: "" }]);
@@ -129,7 +152,7 @@ function Eln() {
 
   async function handleDeleteEntry(id) {
     await supabase.from("entries").delete().eq("id", id);
-    setEntries(entries.filter((e) => e.id !== id));
+    setEntries((prev) => prev.filter((e) => e.id !== id));
     if (selectedEntry?.id === id) {
       setSelectedEntry(null);
       setEntryItems([]);
@@ -146,8 +169,8 @@ function Eln() {
       })
       .eq("id", editEntry.id);
     if (!error) {
-      setEntries(
-        entries.map((en) =>
+      setEntries((prev) =>
+        prev.map((en) =>
           en.id === editEntry.id ? { ...en, ...editEntry } : en
         )
       );
@@ -155,14 +178,17 @@ function Eln() {
     }
   }
 
-  const handleItemChange = (index, field, value) => {
+  const handleAddItemUsage = () => {
+    setSelectedItems((prev) => [
+      ...prev,
+      { inventory_id: "", quantity_used: "", step_number: "" },
+    ]);
+  };
+
+  const handleUsageChange = (index, field, value) => {
     const updated = [...selectedItems];
     updated[index][field] = value;
     setSelectedItems(updated);
-  };
-
-  const addNewItemField = () => {
-    setSelectedItems([...selectedItems, { inventory_id: "", quantity_used: "", step_number: "" }]);
   };
 
   return (
@@ -299,37 +325,50 @@ function Eln() {
               className="border p-1 w-full mb-2"
             />
 
-            <h4 className="font-semibold mb-1">Items Used</h4>
-            {selectedItems.map((item, index) => (
-              <div key={index} className="flex gap-2 mb-2">
+            {/* Inventory Usage Section */}
+            <h4 className="font-semibold mt-4 mb-2">Items Used</h4>
+            {selectedItems.map((usage, idx) => (
+              <div key={idx} className="flex gap-2 mb-2">
                 <select
-                  value={item.inventory_id}
-                  onChange={(e) => handleItemChange(index, "inventory_id", e.target.value)}
+                  value={usage.inventory_id}
+                  onChange={(e) =>
+                    handleUsageChange(idx, "inventory_id", e.target.value)
+                  }
                   className="border p-1 flex-1"
                 >
                   <option value="">Select Item</option>
                   {inventory.map((inv) => (
-                    <option key={inv.id} value={inv.id}>{inv.name}</option>
+                    <option key={inv.id} value={inv.id}>
+                      {inv.name} (Stock: {inv.quantity})
+                    </option>
                   ))}
                 </select>
                 <input
                   type="number"
                   placeholder="Qty"
-                  value={item.quantity_used}
-                  onChange={(e) => handleItemChange(index, "quantity_used", e.target.value)}
+                  value={usage.quantity_used}
+                  onChange={(e) =>
+                    handleUsageChange(idx, "quantity_used", e.target.value)
+                  }
                   className="border p-1 w-20"
                 />
                 <input
                   type="number"
                   placeholder="Step"
-                  value={item.step_number}
-                  onChange={(e) => handleItemChange(index, "step_number", e.target.value)}
+                  value={usage.step_number}
+                  onChange={(e) =>
+                    handleUsageChange(idx, "step_number", e.target.value)
+                  }
                   className="border p-1 w-20"
                 />
               </div>
             ))}
-            <button type="button" onClick={addNewItemField} className="text-blue-500 mb-2">
-              + Add Another Item
+            <button
+              type="button"
+              onClick={handleAddItemUsage}
+              className="text-blue-500 text-sm mb-4"
+            >
+              + Add Item
             </button>
 
             <button
@@ -354,10 +393,10 @@ function Eln() {
               <div className="mt-4">
                 <h3 className="font-semibold mb-2">Items Used</h3>
                 <ul className="list-disc pl-5">
-                  {entryItems.map(item => (
+                  {entryItems.map((item) => (
                     <li key={item.id}>
-                      {item.inventory?.name || "Unknown Item"} — {item.quantity_used} units
-                      {item.step_number && ` (Step ${item.step_number})`}
+                      {item.inventory?.name || "Unknown Item"} — {item.quantity_used}
+                      {item.step_number ? ` (Step ${item.step_number})` : ""}
                     </li>
                   ))}
                 </ul>
