@@ -44,17 +44,16 @@ function Eln() {
   }
 
   async function fetchEntryItems(entryId) {
-    // If your foreign key column is item_id instead of inventory_id,
-    // change "inventory_id" below to "item_id", and in select use
-    // `inventory:item_id (id, name)` aliasing.
     const { data, error } = await supabase
       .from("entry_items")
-      .select(`
+      .select(
+        `
         id,
         quantity_used,
         step_number,
         inventory:inventory_id (id, name)
-      `)
+      `
+      )
       .eq("entry_id", entryId);
     if (!error) setEntryItems(data || []);
   }
@@ -103,7 +102,7 @@ function Eln() {
 
     const entryId = entryData[0].id;
 
-    // 2) Insert linked items + update inventory quantity directly (no RPC)
+    // 2) Insert linked items + update inventory
     for (const usage of selectedItems) {
       const invId = usage.inventory_id;
       const qty = parseFloat(usage.quantity_used);
@@ -111,28 +110,24 @@ function Eln() {
 
       if (!invId || !qty || Number.isNaN(qty)) continue;
 
-      // Insert row into entry_items
       await supabase.from("entry_items").insert([
         {
           entry_id: entryId,
-          inventory_id: invId, // if your column is item_id, change here
+          inventory_id: invId,
           quantity_used: qty,
           step_number: step,
         },
       ]);
 
-      // Find current item in local state
       const invRow = inventory.find((i) => String(i.id) === String(invId));
       const currentQty = invRow?.quantity ?? 0;
-      const newQty = Math.max(0, currentQty - qty); // simple guard
+      const newQty = Math.max(0, currentQty - qty);
 
-      // Update DB inventory
       await supabase
         .from("inventory")
         .update({ quantity: newQty })
         .eq("id", invId);
 
-      // Update local inventory state to reflect change immediately
       setInventory((prev) =>
         prev.map((i) =>
           String(i.id) === String(invId) ? { ...i, quantity: newQty } : i
@@ -140,13 +135,15 @@ function Eln() {
       );
     }
 
-    // 3) Update UI
+    // 3) Update UI and load items immediately in entry details
     setEntries((prev) => [...prev, entryData[0]]);
-    setSelectedEntry(entryData[0]);              // <-- ADDED: auto-select new entry
-    await fetchEntryItems(entryId);              // <-- ADDED: load its items into details
+    setSelectedEntry(entryData[0]);
+    await fetchEntryItems(entryId);
     setNewEntryTitle("");
     setNewEntryContent("");
-    setSelectedItems([{ inventory_id: "", quantity_used: "", step_number: "" }]);
+    setSelectedItems([
+      { inventory_id: "", quantity_used: "", step_number: "" },
+    ]);
     setShowAddEntryForm(false);
   }
 
@@ -211,7 +208,7 @@ function Eln() {
         {notebooks.map((nb) => (
           <div
             key={nb.id}
-            className={`group p-2 mb-1 rounded flex justify-between items-center cursor-pointer hover:bg-gray-100 ${
+            className={`group h-11 p-2 mb-1 rounded flex justify-between items-center cursor-pointer hover:bg-gray-100 ${
               selectedNotebook?.id === nb.id ? "bg-gray-200" : ""
             }`}
             onClick={() => {
@@ -395,7 +392,8 @@ function Eln() {
                 <ul className="list-disc pl-5">
                   {entryItems.map((item) => (
                     <li key={item.id}>
-                      {item.inventory?.name || "Unknown Item"} — {item.quantity_used}
+                      {item.inventory?.name || "Unknown Item"} —{" "}
+                      {item.quantity_used}
                       {item.step_number ? ` (Step ${item.step_number})` : ""}
                     </li>
                   ))}
