@@ -433,7 +433,7 @@ function Eln() {
               <button
                 type="button"
                 onClick={() => setEditEntry(null)}
-                className="px-3 py-1 border rounded"
+                className="px-3 py-1 text-white border rounded hover:text-red-500"
               >
                 Cancel
               </button>
